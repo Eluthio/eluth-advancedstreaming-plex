@@ -1,6 +1,6 @@
 {
   "name": "eluth-plex",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "module",
   "scripts": {
     "build": "node scripts/pack.js"
