@@ -76,6 +76,10 @@
 
                 <!-- Section items -->
                 <div v-else>
+                    <button class="px-breadcrumb-btn" @click="browseBack" style="margin-bottom:12px">
+                        ← {{ browseStack.length ? (browseStack[browseStack.length - 1].title || activeSection.title) : 'Libraries' }}
+                    </button>
+                    <div v-if="browseTitle" class="px-step-title">{{ browseTitle }}</div>
                     <div v-if="itemsLoading" class="px-loading">Loading…</div>
                     <div v-else-if="sectionItems.length === 0" class="px-empty">No items found.</div>
                     <div v-else class="px-grid">
@@ -135,6 +139,7 @@
 
 <script setup>
 import { ref, inject, onUnmounted } from 'vue'
+import Hls from 'hls.js'
 
 const onStream = inject('onStream')
 const onCancel = inject('onCancel')
@@ -167,6 +172,8 @@ const sectionsLoading = ref(false)
 const activeSection   = ref(null)
 const sectionItems    = ref([])
 const itemsLoading    = ref(false)
+const browseStack     = ref([])   // [{title, items}] — nav history within a section
+const browseTitle     = ref('')   // title of current drill-down level
 
 // Playback
 const videoEl      = ref(null)
@@ -177,6 +184,7 @@ const isPaused     = ref(true)
 const currentTime  = ref(0)
 const duration     = ref(0)
 let   capturedStream = null
+let   hls            = null
 
 // ── Auth: PIN flow ─────────────────────────────────────────────────────────────
 async function requestPin() {
@@ -282,17 +290,42 @@ async function selectServer(server) {
 // ── Library browser ───────────────────────────────────────────────────────────
 async function openSection(sec) {
     activeSection.value = sec
+    browseStack.value   = []
+    browseTitle.value   = ''
     itemsLoading.value  = true
     sectionItems.value  = []
     try {
         const res = await serverFetch(`/library/sections/${sec.key}/all`)
         const xml  = parseXml(res)
-        sectionItems.value = xmlVideos(xml)
+        sectionItems.value = xmlItems(xml)
     } catch {
         sectionItems.value = []
     } finally {
         itemsLoading.value = false
     }
+}
+
+async function drillInto(item) {
+    browseStack.value.push({ title: browseTitle.value, items: sectionItems.value })
+    browseTitle.value  = item.title
+    itemsLoading.value = true
+    sectionItems.value = []
+    try {
+        const res = await serverFetch(`/library/metadata/${item.ratingKey}/children`)
+        const xml  = parseXml(res)
+        sectionItems.value = xmlItems(xml)
+    } catch {
+        sectionItems.value = []
+    } finally {
+        itemsLoading.value = false
+    }
+}
+
+function browseBack() {
+    if (!browseStack.value.length) { activeSection.value = null; return }
+    const prev = browseStack.value.pop()
+    sectionItems.value = prev.items
+    browseTitle.value  = prev.title
 }
 
 function sectionIcon(type) {
@@ -306,8 +339,13 @@ function thumbUrl(path) {
 
 // ── Playback ──────────────────────────────────────────────────────────────────
 async function selectItem(item) {
-    // For shows, we'd normally list episodes — for simplicity, pick first episode
-    // For movies & episodes, get playback session
+    // Container types — drill down rather than play
+    const drillTypes = ['show', 'season', 'artist', 'album']
+    if (drillTypes.includes(item.type)) {
+        await drillInto(item)
+        return
+    }
+
     playingTitle.value = item.title
     playError.value    = null
     streamReady.value  = false
@@ -323,30 +361,49 @@ async function selectItem(item) {
     }
 }
 
-async function startPlayback(item) {
-    const srv = activeServer.value
+function startPlayback(item) {
+    const srv       = activeServer.value
+    const sessionId = Math.random().toString(36).slice(2)
 
-    // Fetch full metadata to get the Part file key for direct play
-    let partKey = item.partKey
-    if (!partKey) {
-        try {
-            const res = await serverFetch(`/library/metadata/${item.ratingKey}`)
-            const xml  = parseXml(res)
-            partKey    = xml.querySelector('Part')?.getAttribute('key') ?? null
-        } catch { /* fall through to error below */ }
-    }
-
-    if (!partKey) {
-        playError.value = 'Could not find a playable file for this item.'
-        return
-    }
-
-    // Direct play — browser plays the file natively, no transcoding needed
-    const directUrl = `${srv.uri}${partKey}?X-Plex-Token=${srv.accessToken}`
-    videoEl.value.src = directUrl
-    videoEl.value.play().catch(e => {
-        playError.value = `Playback failed: ${e.message}`
+    const params = new URLSearchParams({
+        hasMDE:             '1',
+        path:               `/library/metadata/${item.ratingKey}`,
+        mediaIndex:         '0',
+        partIndex:          '0',
+        protocol:           'hls',
+        directPlay:         '0',
+        directStream:       '1',
+        videoResolution:    '1920x1080',
+        maxVideoBitrate:    '20000',
+        videoQuality:       '100',
+        session:            sessionId,
+        'X-Plex-Token':     srv.accessToken,
+        'X-Plex-Product':   PLEX_PRODUCT,
+        'X-Plex-Version':   '1.0.0',
+        'X-Plex-Client-Identifier': PLEX_CLIENT_ID,
+        'X-Plex-Platform':  'Web',
     })
+
+    const hlsUrl = `${srv.uri}/video/:/transcode/universal/start.m3u8?${params}`
+
+    if (Hls.isSupported()) {
+        if (hls) { hls.destroy() }
+        hls = new Hls({ enableWorker: false })
+        hls.loadSource(hlsUrl)
+        hls.attachMedia(videoEl.value)
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            videoEl.value.play().catch(e => { playError.value = `Playback failed: ${e.message}` })
+        })
+        hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) playError.value = 'Stream error — check the Plex server is reachable.'
+        })
+    } else if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari has native HLS support
+        videoEl.value.src = hlsUrl
+        videoEl.value.play().catch(e => { playError.value = `Playback failed: ${e.message}` })
+    } else {
+        playError.value = 'HLS is not supported in this browser.'
+    }
 }
 
 function togglePlay() {
@@ -408,14 +465,18 @@ function xmlDirectories(doc) {
     }))
 }
 
-function xmlVideos(doc) {
-    return Array.from(doc.querySelectorAll('Video')).map(el => ({
-        ratingKey: el.getAttribute('ratingKey'),
-        title:     el.getAttribute('title'),
-        thumb:     el.getAttribute('thumb'),
-        type:      el.getAttribute('type'),
-        year:      el.getAttribute('year'),
-    }))
+function xmlItems(doc) {
+    const els = [...doc.querySelectorAll('Video'), ...doc.querySelectorAll('Directory')]
+    return els
+        .filter(el => el.getAttribute('ratingKey'))
+        .map(el => ({
+            ratingKey: el.getAttribute('ratingKey'),
+            title:     el.getAttribute('title'),
+            thumb:     el.getAttribute('thumb') ?? el.getAttribute('art'),
+            type:      el.getAttribute('type'),
+            year:      el.getAttribute('year'),
+        }))
+        .sort((a, b) => (a.title ?? '').localeCompare(b.title ?? ''))
 }
 
 function cancel() {
@@ -425,6 +486,7 @@ function cancel() {
 
 function cleanup() {
     clearInterval(pinPoller)
+    if (hls) { hls.destroy(); hls = null }
     if (videoEl.value) { videoEl.value.src = ''; videoEl.value.load() }
 }
 
