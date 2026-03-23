@@ -1,0 +1,9 @@
+{
+  "slug": "plex",
+  "name": "Plex",
+  "description": "Stream Plex content directly into Advanced Streaming as a source. Browse your Plex library and play any movie, show, or music video as a composited layer.",
+  "author": "Eluth",
+  "tier": "community",
+  "repository": "https://github.com/Eluthio/eluth-advancedstreaming-plex",
+  "latest_release": "https://github.com/Eluthio/eluth-advancedstreaming-plex/releases/latest/download/plugin.zip"
+}
