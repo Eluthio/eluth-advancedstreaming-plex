@@ -102,13 +102,31 @@
             <!-- Step: playing / capturing -->
             <div v-else-if="step === 'playing'" class="px-step px-step--playing">
                 <div class="px-step-title">{{ playingTitle }}</div>
-                <video ref="videoEl" class="px-video" autoplay muted playsinline />
+                <video ref="videoEl" class="px-video" muted playsinline
+                    @canplay="streamReady = true"
+                    @timeupdate="currentTime = videoEl?.currentTime ?? 0"
+                    @durationchange="duration = videoEl?.duration ?? 0"
+                    @pause="isPaused = true"
+                    @play="isPaused = false"
+                />
                 <div v-if="playError" class="px-error">{{ playError }}</div>
                 <div v-else-if="!streamReady" class="px-loading">Buffering…</div>
+
+                <!-- Playback controls -->
+                <div v-if="streamReady" class="px-controls">
+                    <button class="px-ctrl-btn" @click="togglePlay">{{ isPaused ? '▶' : '⏸' }}</button>
+                    <div class="px-seek-wrap">
+                        <input type="range" class="px-seek" min="0" :max="duration || 100" step="1"
+                            :value="currentTime" @change="seek($event)" />
+                        <span class="px-time">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
+                    </div>
+                    <button class="px-ctrl-btn" @click="step = 'library'" title="Back to library">⏹</button>
+                </div>
+
                 <button v-if="streamReady" class="px-btn px-btn--primary" @click="confirmStream">
                     ✓ Use as Source
                 </button>
-                <button class="px-btn" @click="step = 'library'">← Back</button>
+                <button v-if="!streamReady && !playError" class="px-btn" @click="step = 'library'">← Back</button>
             </div>
 
         </div>
@@ -117,7 +135,6 @@
 
 <script setup>
 import { ref, inject, onUnmounted } from 'vue'
-import Hls from 'hls.js'
 
 const onStream = inject('onStream')
 const onCancel = inject('onCancel')
@@ -152,11 +169,13 @@ const sectionItems    = ref([])
 const itemsLoading    = ref(false)
 
 // Playback
-const videoEl     = ref(null)
+const videoEl      = ref(null)
 const playingTitle = ref('')
-const playError   = ref(null)
-const streamReady = ref(false)
-let   hls         = null
+const playError    = ref(null)
+const streamReady  = ref(false)
+const isPaused     = ref(true)
+const currentTime  = ref(0)
+const duration     = ref(0)
 let   capturedStream = null
 
 // ── Auth: PIN flow ─────────────────────────────────────────────────────────────
@@ -307,48 +326,44 @@ async function selectItem(item) {
 async function startPlayback(item) {
     const srv = activeServer.value
 
-    // Request a universal transcode session — this gives us an HLS manifest
-    const params = new URLSearchParams({
-        'X-Plex-Token':        srv.accessToken,
-        'path':                `/library/metadata/${item.ratingKey}`,
-        'mediaIndex':          '0',
-        'partIndex':           '0',
-        'protocol':            'hls',
-        'videoResolution':     '1280x720',
-        'videoBitrate':        '4000',
-        'audioBoost':          '100',
-        'copyts':              '1',
-        'subtitles':           'burn',
-        'X-Plex-Platform':     'Chrome',
-        'X-Plex-Product':      PLEX_PRODUCT,
-        'X-Plex-Client-Identifier': PLEX_CLIENT_ID,
-    })
-
-    const manifestUrl = `${srv.uri}/video/:/transcode/universal/start.m3u8?${params}`
-
-    if (Hls.isSupported()) {
-        hls = new Hls({ xhrSetup(xhr) {
-            xhr.setRequestHeader('X-Plex-Token', srv.accessToken)
-        }})
-        hls.loadSource(manifestUrl)
-        hls.attachMedia(videoEl.value)
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            videoEl.value.play().catch(() => {})
-        })
-        hls.on(Hls.Events.ERROR, (_e, data) => {
-            if (data.fatal) {
-                playError.value = 'Stream error — check the Plex server is reachable.'
-            }
-        })
-    } else if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari native HLS
-        videoEl.value.src = manifestUrl
-        videoEl.value.play().catch(() => {})
-    } else {
-        throw new Error('HLS not supported in this browser.')
+    // Fetch full metadata to get the Part file key for direct play
+    let partKey = item.partKey
+    if (!partKey) {
+        try {
+            const res = await serverFetch(`/library/metadata/${item.ratingKey}`)
+            const xml  = parseXml(res)
+            partKey    = xml.querySelector('Part')?.getAttribute('key') ?? null
+        } catch { /* fall through to error below */ }
     }
 
-    videoEl.value.addEventListener('playing', () => { streamReady.value = true }, { once: true })
+    if (!partKey) {
+        playError.value = 'Could not find a playable file for this item.'
+        return
+    }
+
+    // Direct play — browser plays the file natively, no transcoding needed
+    const directUrl = `${srv.uri}${partKey}?X-Plex-Token=${srv.accessToken}`
+    videoEl.value.src = directUrl
+    videoEl.value.play().catch(e => {
+        playError.value = `Playback failed: ${e.message}`
+    })
+}
+
+function togglePlay() {
+    if (!videoEl.value) return
+    if (videoEl.value.paused) videoEl.value.play()
+    else videoEl.value.pause()
+}
+
+function seek(e) {
+    if (videoEl.value) videoEl.value.currentTime = parseFloat(e.target.value)
+}
+
+function formatTime(secs) {
+    if (!secs || !isFinite(secs)) return '0:00'
+    const m = Math.floor(secs / 60)
+    const s = Math.floor(secs % 60)
+    return `${m}:${String(s).padStart(2, '0')}`
 }
 
 function confirmStream() {
@@ -410,7 +425,6 @@ function cancel() {
 
 function cleanup() {
     clearInterval(pinPoller)
-    if (hls) { hls.destroy(); hls = null }
     if (videoEl.value) { videoEl.value.src = ''; videoEl.value.load() }
 }
 
@@ -492,6 +506,20 @@ onUnmounted(cleanup)
 .px-grid-label { font-size: 11px; text-align: center; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
 
 .px-video { width: 100%; max-height: 280px; background: #000; border-radius: 6px; }
+
+.px-controls {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px; background: rgba(0,0,0,0.3); border-radius: 6px;
+}
+.px-ctrl-btn {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+    color: #e2e8f0; border-radius: 6px; width: 36px; height: 36px;
+    cursor: pointer; font-size: 14px; flex-shrink: 0; transition: all 0.15s;
+}
+.px-ctrl-btn:hover { background: rgba(255,255,255,0.16); }
+.px-seek-wrap { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.px-seek { width: 100%; accent-color: #e2a31a; cursor: pointer; }
+.px-time { font-size: 11px; color: #64748b; text-align: right; }
 
 .px-breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; color: #64748b; }
 .px-breadcrumb-btn { background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; padding: 0; }

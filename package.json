@@ -1,14 +1,11 @@
 {
   "name": "eluth-plex",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "type": "module",
   "scripts": {
     "build": "node scripts/pack.js"
   },
-  "dependencies": {
-    "hls.js": "^1.5.13"
-  },
-  "devDependencies": {
+"devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
     "vite": "^5.2.0",
     "vue": "^3.4.21"
