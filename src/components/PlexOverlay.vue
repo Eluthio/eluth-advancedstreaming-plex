@@ -10,18 +10,23 @@
 
             <!-- Step: PIN auth -->
             <div v-if="step === 'auth'" class="px-step">
-                <div class="px-auth-hint">
-                    Sign in to Plex to browse your library.
+                <div v-if="savedToken" class="px-connected-block">
+                    <div class="px-connected-label">✓ Connected to Plex</div>
+                    <button class="px-btn px-btn--primary" @click="useStoredToken">Browse Library</button>
+                    <button class="px-btn px-btn--sm" @click="disconnectPlex">Disconnect</button>
                 </div>
-                <div v-if="pinCode" class="px-pin-block">
-                    <div class="px-pin-label">Visit <strong>plex.tv/link</strong> and enter:</div>
-                    <div class="px-pin-code">{{ pinCode }}</div>
-                    <div class="px-pin-waiting">Waiting for authorisation…</div>
-                    <div class="px-pin-spinner" />
-                </div>
-                <button v-else class="px-btn" @click="requestPin" :disabled="pinLoading">
-                    {{ pinLoading ? 'Loading…' : 'Connect Plex Account' }}
-                </button>
+                <template v-else>
+                    <div class="px-auth-hint">Sign in to Plex to browse your library.</div>
+                    <div v-if="pinCode" class="px-pin-block">
+                        <div class="px-pin-label">Visit <strong>plex.tv/link</strong> and enter:</div>
+                        <div class="px-pin-code">{{ pinCode }}</div>
+                        <div class="px-pin-waiting">Waiting for authorisation…</div>
+                        <div class="px-pin-spinner" />
+                    </div>
+                    <button v-else class="px-btn" @click="requestPin" :disabled="pinLoading">
+                        {{ pinLoading ? 'Loading…' : 'Connect Plex Account' }}
+                    </button>
+                </template>
                 <div v-if="authError" class="px-error">{{ authError }}</div>
             </div>
 
@@ -117,12 +122,14 @@ import Hls from 'hls.js'
 const onStream = inject('onStream')
 const onCancel = inject('onCancel')
 
-const PLEX_PRODUCT   = 'Eluth'
-const PLEX_CLIENT_ID = 'eluth-plugin-plex-' + Math.random().toString(36).slice(2)
+const PLEX_PRODUCT    = 'Eluth'
+const PLEX_CLIENT_ID  = 'eluth-plugin-plex'
+const STORAGE_KEY     = 'eluth_plex_token'
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const step     = ref('auth')
+const step      = ref('auth')
 const authToken = ref(null)
+const savedToken = ref(localStorage.getItem(STORAGE_KEY))
 
 // Auth
 const pinCode    = ref(null)
@@ -186,11 +193,24 @@ function startPinPoller() {
             if (data.authToken) {
                 clearInterval(pinPoller)
                 authToken.value = data.authToken
-                pinCode.value   = null
+                localStorage.setItem(STORAGE_KEY, data.authToken)
+                savedToken.value = data.authToken
+                pinCode.value    = null
                 await loadServers()
             }
         } catch { /* network hiccup */ }
     }, 2000)
+}
+
+function useStoredToken() {
+    authToken.value = savedToken.value
+    loadServers()
+}
+
+function disconnectPlex() {
+    localStorage.removeItem(STORAGE_KEY)
+    savedToken.value = null
+    authToken.value  = null
 }
 
 // ── Servers ───────────────────────────────────────────────────────────────────
@@ -432,6 +452,10 @@ onUnmounted(cleanup)
 .px-pin-waiting { font-size: 13px; color: #64748b; }
 .px-pin-spinner { width: 20px; height: 20px; border: 2px solid rgba(255,255,255,0.1); border-top-color: #e2a31a; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.px-connected-block { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0; }
+.px-connected-label { font-size: 15px; font-weight: 600; color: #4ade80; }
+.px-btn--sm { font-size: 12px; padding: 6px 14px; }
 
 .px-btn {
     padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600;
