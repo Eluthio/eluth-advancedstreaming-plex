@@ -167,7 +167,7 @@ async function requestPin() {
         const res = await fetch('https://plex.tv/api/v2/pins', {
             method: 'POST',
             headers: plexHeaders(),
-            body: new URLSearchParams({ strong: 'true' }),
+            body: new URLSearchParams({ strong: 'false' }),
         })
         if (!res.ok) throw new Error('Failed to get PIN')
         const data = await res.json()
