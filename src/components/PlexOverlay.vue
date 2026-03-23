@@ -1,5 +1,5 @@
 <template>
-    <div class="px-backdrop" @click.self="cancel">
+    <div class="px-backdrop" @click.self="step !== 'live' && cancel()">
         <div class="px-modal">
 
             <!-- Header -->
@@ -103,9 +103,13 @@
                 </div>
             </div>
 
-            <!-- Step: playing / capturing -->
-            <div v-else-if="step === 'playing'" class="px-step px-step--playing">
+            <!-- Step: playing / live — kept as one block so <video> stays in the DOM -->
+            <div v-else-if="step === 'playing' || step === 'live'" class="px-step px-step--playing">
+
+                <!-- Live indicator -->
+                <div v-if="step === 'live'" class="px-live-badge">🔴 LIVE</div>
                 <div class="px-step-title">{{ playingTitle }}</div>
+
                 <video ref="videoEl" class="px-video" muted playsinline
                     @canplay="streamReady = true"
                     @timeupdate="currentTime = videoEl?.currentTime ?? 0"
@@ -114,23 +118,25 @@
                     @play="isPaused = false"
                 />
                 <div v-if="playError" class="px-error">{{ playError }}</div>
-                <div v-else-if="!streamReady" class="px-loading">Buffering…</div>
+                <div v-else-if="step === 'playing' && !streamReady" class="px-loading">Buffering…</div>
 
                 <!-- Playback controls -->
-                <div v-if="streamReady" class="px-controls">
+                <div v-if="streamReady || step === 'live'" class="px-controls">
                     <button class="px-ctrl-btn" @click="togglePlay">{{ isPaused ? '▶' : '⏸' }}</button>
                     <div class="px-seek-wrap">
                         <input type="range" class="px-seek" min="0" :max="duration || 100" step="1"
                             :value="currentTime" @change="seek($event)" />
                         <span class="px-time">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
                     </div>
-                    <button class="px-ctrl-btn" @click="step = 'library'" title="Back to library">⏹</button>
                 </div>
 
-                <button v-if="streamReady" class="px-btn px-btn--primary" @click="confirmStream">
-                    ✓ Use as Source
+                <button v-if="step === 'playing' && streamReady" class="px-btn px-btn--primary" @click="confirmStream">
+                    ✓ Go Live
                 </button>
-                <button v-if="!streamReady && !playError" class="px-btn" @click="step = 'library'">← Back</button>
+                <button v-if="step === 'live'" class="px-btn px-btn--danger" @click="stopStream">
+                    ⏹ Stop Plex
+                </button>
+                <button v-if="step === 'playing' && !streamReady && !playError" class="px-btn" @click="step = 'library'">← Back</button>
             </div>
 
         </div>
@@ -428,9 +434,15 @@ function confirmStream() {
     try {
         capturedStream = videoEl.value.captureStream(30)
         onStream(capturedStream)
+        step.value = 'live'
     } catch (e) {
         playError.value = 'Could not capture stream: ' + e.message
     }
+}
+
+function stopStream() {
+    cleanup()
+    onCancel()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -542,6 +554,15 @@ onUnmounted(cleanup)
 .px-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .px-btn--primary { background: #e2a31a; border-color: #e2a31a; color: #000; }
 .px-btn--primary:hover:not(:disabled) { background: #f0b630; }
+.px-btn--danger { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.4); color: #f87171; }
+.px-btn--danger:hover:not(:disabled) { background: rgba(239,68,68,0.25); }
+
+.px-live-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4);
+    color: #f87171; font-size: 12px; font-weight: 700; letter-spacing: 0.05em;
+    padding: 4px 10px; border-radius: 20px; margin-bottom: 4px;
+}
 
 .px-list { display: flex; flex-direction: column; gap: 6px; }
 .px-list-item {
