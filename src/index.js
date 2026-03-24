@@ -162,8 +162,7 @@ window.__EluthStreamSources['plex'] = {
         switch (msg.type) {
             case 'plex-play':
                 saveConfig(msg.config)
-                startPlayback(msg.config).catch(e => { plexState.error = e.message; notify() })
-                break
+                return startPlayback(msg.config).catch(e => { plexState.error = e.message; notify(); return null })
             case 'plex-pause':
                 videoEl?.pause()
                 break
