@@ -1,4 +1,5 @@
 import Hls from 'hls.js'
+import PlexControls from './PlexControls.vue'
 
 const CONFIG_KEY     = 'eluth_plex_config'
 const PLEX_PRODUCT   = 'Eluth'
@@ -139,11 +140,16 @@ if (saved) {
     plexState.title        = saved.title || ''
 }
 
+// ── Register controls component for the stream control popup ──────────────────
+window.__EluthPluginControls = window.__EluthPluginControls || {}
+window.__EluthPluginControls['plex'] = PlexControls
+
 // ── Register as stream source ─────────────────────────────────────────────────
 window.__EluthStreamSources = window.__EluthStreamSources || {}
 window.__EluthStreamSources['plex'] = {
     label: 'Plex',
     icon:  '🎬',
+    slug:  'advancedstreaming-plex',
 
     // AdvancedStreaming calls this on mount so plex state changes trigger a broadcast
     setStateCallback(cb) { stateCallback = cb },
