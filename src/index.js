@@ -154,6 +154,10 @@ window.__EluthStreamSources['plex'] = {
     // AdvancedStreaming calls this on mount so plex state changes trigger a broadcast
     setStateCallback(cb) { stateCallback = cb },
 
+    // Exposes the raw video element so AdvancedStreaming can use createMediaElementSource
+    // instead of captureStream — works around Chromium's MSE/captureStream audio omission.
+    getAudioElement() { return videoEl },
+
     // Called when going live with a Plex layer — auto-starts with saved config, no UI
     async getStream() {
         const config = loadConfig()
