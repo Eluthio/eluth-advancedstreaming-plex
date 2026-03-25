@@ -40,7 +40,7 @@ function notify() {
 function ensureVideoEl() {
     if (videoEl) return
     videoEl = document.createElement('video')
-    videoEl.muted       = true
+    videoEl.volume      = 0        // muted=true blocks captureStream audio; volume=0 keeps tracks capturable
     videoEl.playsInline = true
     Object.assign(videoEl.style, {
         position: 'absolute', width: '1px', height: '1px',
